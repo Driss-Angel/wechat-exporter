@@ -12,9 +12,10 @@
 > 保留代码兼容性，但发布包尚未完成实机验证。Windows 版本正在规划中，当前 macOS
 > 发布包不能用于 Windows。
 
-> **本仓库是修复版分支。** 上游 [liangyeshier/wechat-exporter](https://github.com/liangyeshier/wechat-exporter)
-> 及其原始作者 TAO 的 [qwe11223/wechat-exporter-mac](https://github.com/qwe11223/wechat-exporter-mac)
-> 只读取第一个消息分片：微信 4.x 会把同一个会话拆到多个 `message_N.db`，长聊天的早期
+> **本仓库是修复版分支，致谢原作者。** 上游是 [@liangyeshier](https://github.com/liangyeshier) 的
+> [liangyeshier/wechat-exporter](https://github.com/liangyeshier/wechat-exporter)，最初由
+> [@qwe11223](https://github.com/qwe11223)（TAO）在 [qwe11223/wechat-exporter-mac](https://github.com/qwe11223/wechat-exporter-mac)
+> 开源，密钥提取、解密、解析和导出的全部基础工作都来自他们。两者都只读取第一个消息分片：微信 4.x 会把同一个会话拆到多个 `message_N.db`，长聊天的早期
 > 历史全部丢失（实测一个账号 176 万条消息只能看到 69 万条）。本分支合并全部分片、按时间
 > 排序并去重，并附带跨分片测试；界面、导出格式与上游保持一致。其余功能与文档归功于原作者。
 
