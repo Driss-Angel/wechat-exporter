@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>微信参谋</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1a1a1a;--muted:#6b7280;--line:#e5e7eb;--acc:#2563eb;--me:#dcfce7;--other:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1115;--card:#171a21;--fg:#e5e7eb;--muted:#9ca3af;--line:#2a2f3a;--acc:#60a5fa;--me:#14532d;--other:#1f2430}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,"PingFang SC",sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 4px}.status{color:var(--muted);font-size:13px}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:14px 0 8px;min-height:28px}
+.top{margin-bottom:4px}
+.bar .status{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stylebox{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;white-space:nowrap}
+#fb{margin:0 0 12px}#fb:empty{display:none}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card h2{font-size:14px;margin:0 0 8px;color:var(--muted)}
+.msg{padding:6px 10px;border-radius:10px;margin:4px 0;background:var(--other);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.msg.me{background:var(--me);border-color:transparent}.msg small{color:var(--muted);margin-right:6px}
+.pending .msg{border-color:var(--acc)}
+.kv{display:flex;gap:8px;margin:4px 0}.kv b{min-width:48px;color:var(--muted);font-weight:500}
+.urg{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--acc);color:#fff;font-size:12px}
+.reply{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0;cursor:pointer}
+.reply:hover{border-color:var(--acc)}.reply .st{font-size:12px;color:var(--muted)}.reply .tx{margin-top:4px;white-space:pre-wrap}
+.err{color:#dc2626;font-size:13px}.scroll{max-height:60vh;overflow:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.picker{position:relative;flex:1;min-width:220px;max-width:360px}
+@media(max-width:700px){.picker{max-width:none;width:100%}}
+.picker input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font:inherit}
+.list{position:absolute;top:100%;left:0;right:0;z-index:9;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:4px;max-height:50vh;overflow:auto;display:none}
+.list div{padding:8px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}.list div:hover{background:var(--bg)}
+.list small{color:var(--muted)}.list .dim{opacity:.5}
+.go{float:right;font:inherit;font-size:12px;padding:2px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);cursor:pointer}.go:hover{border-color:var(--acc)}
+.embed main{padding-top:34px}
+select{font:inherit;font-size:13px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:3px 8px;height:28px}
+</style></head><body><main>
+<div class="top"><h1>微信参谋 · <span id="contact">未选择</span></h1>
+<div class="picker"><input id="q" placeholder="搜联系人（默认按最近聊天排序）" autocomplete="off"><div id="list" class="list"></div></div></div>
+<div class="bar"><span class="status" id="status"></span><label class="stylebox"><span id="styleLabel">风格</span><select id="style"></select></label></div><div class="status" id="fb"></div>
+<div class="grid">
+<section class="card"><h2>最新建议 <span id="updated" style="font-weight:400"></span> <button id="go" class="go" title="把最近一条对方消息当作待回复，立即分析">⚡ 立即分析</button></h2><div id="sug">等待对方消息…</div><div class="err" id="err"></div></section>
+<section class="card"><h2>最近上下文</h2><div class="pending" id="pending"></div><div class="scroll" id="recent"></div></section>
+</div></main>
+<script>
+const EMBED=new URLSearchParams(location.search).has('embed');
+if(EMBED){document.documentElement.classList.add('embed')}
+const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const ago=ts=>{if(!ts)return '';const d=Date.now()/1000-ts;if(d<3600)return Math.max(1,Math.round(d/60))+' 分钟前';if(d<86400)return Math.round(d/3600)+' 小时前';if(d<86400*30)return Math.round(d/86400)+' 天前';return new Date(ts*1000).toLocaleDateString()};
+function msgHtml(line){const me=/ 我: /.test(line);const i=line.indexOf(': ');const head=line.slice(0,i),body=line.slice(i+2);return `<div class="msg ${me?'me':''}"><small>${esc(head)}</small>${esc(body)}</div>`}
+async function tick(){try{const s=await (await fetch('/state.json?'+Date.now())).json();
+document.getElementById('contact').textContent=s.contact||'未选择';document.getElementById('status').textContent=s.status||'';
+const sel=document.getElementById('style');if(s.styles&&sel.options.length!==s.styles.length){sel.innerHTML=s.styles.map(x=>`<option value="${esc(x.key)}">${esc(x.name)}</option>`).join('')}if(s.style&&sel.value!==s.style&&document.activeElement!==sel)sel.value=s.style;
+const f=s.feedback;document.getElementById('fb').textContent=f&&f.total?`对照记录 ${f.total} 次：采纳 ${f.adopted||0} · 改写 ${f.adapted||0} · 自己写 ${f.own||0} · 没回 ${f.none||0}`:'';
+document.getElementById('err').textContent=s.error||'';document.getElementById('updated').textContent=s.updated?('· '+s.updated+(s.suggestion?.elapsed?` · ${s.suggestion.elapsed}s`:'')):'';
+document.getElementById('pending').innerHTML=(s.pending||[]).map(msgHtml).join('');
+const r=document.getElementById('recent');const atBottom=r.scrollTop+r.clientHeight>=r.scrollHeight-20;const key=(s.contact_username||'')+'|'+((s.recent||[]).length);const fresh=(window._rk||'').split('|')[0]!==(s.contact_username||'');r.innerHTML=(s.recent||[]).map(msgHtml).join('');if(fresh||atBottom){r.scrollTop=r.scrollHeight;requestAnimationFrame(()=>{r.scrollTop=r.scrollHeight})}window._rk=key;
+const g=s.suggestion;if(g){document.getElementById('sug').innerHTML=`<div class="kv"><b>情绪</b><span>${esc(g.mood)}</span></div><div class="kv"><b>意图</b><span>${esc(g.intent)}</span></div><div class="kv"><b>节奏</b><span class="urg">${esc(g.urgency)}</span></div><div class="kv"><b>建议</b><span>${esc(g.advice)}</span></div>`+(g.replies||[]).map(x=>`<div class="reply" data-t="${esc(x.text)}" title="点击复制"><div class="st">${esc(x.style)}</div><div class="tx">${esc(x.text)}</div></div>`).join('');
+document.querySelectorAll('.reply').forEach(el=>el.onclick=()=>{navigator.clipboard.writeText(el.dataset.t);el.querySelector('.st').textContent+=' · 已复制'})}
+else{document.getElementById('sug').textContent=s.contact?'等待对方消息…':'先在上面选一个联系人'}
+}catch(e){}}
+tick();setInterval(tick,2000);
+const q=document.getElementById('q'),list=document.getElementById('list');let t=null;
+async function search(){const rows=await (await fetch('/contacts?q='+encodeURIComponent(q.value))).json();
+list.innerHTML=rows.map(r=>`<div data-u="${esc(r.username)}" class="${r.has_chat?'':'dim'}"><span>${esc(r.name)}${r.group?' <small>群</small>':''}</span><small>${esc(r.nickname&&r.nickname!==r.name?r.nickname+' · ':'')}${r.last_ts?ago(r.last_ts):(r.has_chat?'':'无记录')}</small></div>`).join('')||'<div><small>没有匹配</small></div>';
+list.style.display='block';list.querySelectorAll('div[data-u]').forEach(el=>el.onclick=async()=>{list.style.display='none';q.value='';await fetch('/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:el.dataset.u})});document.getElementById('status').textContent='切换中…'})}
+document.getElementById('go').onclick=()=>{fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n:1})});document.getElementById('status').textContent='已触发，分析中…'};
+document.getElementById('style').onchange=e=>fetch('/style',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:e.target.value})});
+q.oninput=()=>{clearTimeout(t);t=setTimeout(search,200)};q.onfocus=search;document.addEventListener('click',e=>{if(!e.target.closest('.picker'))list.style.display='none'});
+</script></body></html>

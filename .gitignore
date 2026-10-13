@@ -41,3 +41,6 @@ video/demo_home/
 video/out/
 video/rec_pw/
 video/.orig/
+
+# local model endpoints (private: your own hosts)
+llm_endpoints.json
