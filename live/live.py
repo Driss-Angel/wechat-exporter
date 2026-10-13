@@ -8,6 +8,8 @@
 每联系人的长期记忆放 ~/.wechat_live/memory/<wxid>.md（可选，取其 ## 五/六 章）
 """
 import sys, os, json, time, argparse, threading, subprocess, collections, re, difflib, urllib.request
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import quote, urlparse, parse_qs
 
@@ -233,6 +235,8 @@ def load_memory(username):
     rest = [x for x in parts if x.startswith(('## 五', '## 六', '## 七', '## 八'))]
     return ('\n'.join(rules + rest))[:10000] or txt[-10000:]
 
+BJ = ZoneInfo('Asia/Shanghai')   # 本机时钟可能不是北京时间，消息时间一律按北京时间给模型和页面
+
 class Session:
     def __init__(self, acct, contact, ctx_n, group_all=False):
         self.group_all = group_all
@@ -256,7 +260,7 @@ class Session:
         who = self.me if m.is_sender else (m.sender_username or self.other) if self.contact.is_group else self.other
         if self.contact.is_group and not m.is_sender and m.sender_username:
             c = self.chat.acct.contacts.get(m.sender_username); who = c.display_name if c else m.sender_username
-        return f"{m.dt:%m-%d %H:%M} {who}: {m.display_text or f'[{m.kind}]'}"
+        return f"{datetime.fromtimestamp(m.timestamp, BJ):%m-%d %H:%M} {who}: {m.display_text or f'[{m.kind}]'}"
 
     def poll(self):
         new = [m for m in self.chat.fetch(self.last_ts) if m.local_id > self.last_id]
@@ -413,7 +417,7 @@ def main():
                     sug = parse_json(chat(url, model, SYSTEM, user))
                     sug['elapsed'] = round(time.time() - t0, 1); sug['for_ids'] = [m.local_id for m in sess.pending]; sug['for_ts'] = [m.timestamp for m in sess.pending]; sug['style'] = style['key']
                     sess.fb.on_suggestion(sug)
-                    state['suggestion'] = sug; state['updated'] = time.strftime('%H:%M:%S'); state['status'] = '建议已更新，继续监听'; state['error'] = None
+                    state['suggestion'] = sug; state['updated'] = datetime.now(BJ).strftime('%H:%M:%S'); state['status'] = '建议已更新，继续监听'; state['error'] = None
                     first = (sug.get('replies') or [{}])[0].get('text', '')
                     notify(f'{sess.other} · {sug.get("urgency", "")}', (sug.get('advice', '') + ' ｜ ' + first) if first else sug.get('advice', ''))
                     print(f"[model] {sug['elapsed']}s urgency={sug.get('urgency')} replies={len(sug.get('replies') or [])}", flush=True)
