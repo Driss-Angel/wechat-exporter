@@ -44,3 +44,6 @@ video/.orig/
 
 # local model endpoints (private: your own hosts)
 llm_endpoints.json
+
+# third-party skill source texts (kept locally only; see live/README.md)
+live/styles/*.source.md

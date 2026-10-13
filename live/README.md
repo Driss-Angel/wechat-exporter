@@ -4,7 +4,7 @@
 
 - `live.py`：监听进程。SQLCipher 只读打开微信正在写的库，按 local_id 增量拉新消息；对方来消息 → debounce → 本地模型给出情绪判断与候选回复；页面 `127.0.0.1:8765`，支持搜索切换联系人（按最近聊天排序）、群聊只在 @我 / 引用我时触发、建议与实际回复配对记录、可切换参谋风格。
 - `dock.py`：悬浮面板，跟随微信窗口贴在右侧，可折叠，折叠时有新建议会闪红点。
-- `styles/`：参谋风格指令。`*.source.md` 为 GitHub 上第三方 skill 原文（见文件头），`*.md` 为本地模型压缩后的风格指令，`distill.py` 为压缩脚本。
+- `styles/`：参谋风格指令。`*.md` 为本地模型压缩后的风格指令，`distill.py` 为压缩脚本；第三方 skill 原文（`*.source.md`）不入库，自行从其 GitHub 仓取回后用 `distill.py` 压缩。
 - 运行时数据全部在仓库外 `~/.wechat_live/`：`state.json`、`<wxid>.jsonl` 消息日志、`<wxid>_feedback.jsonl` 对照记录、`memory/<wxid>.md` 长期记忆、`last_contact` / `last_style`。
 
 ```bash
