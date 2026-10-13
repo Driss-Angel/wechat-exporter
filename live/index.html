@@ -15,7 +15,7 @@ h1{font-size:18px;margin:0 0 4px}.status{color:var(--muted);font-size:13px}
 .card h2{font-size:14px;margin:0 0 8px;color:var(--muted)}
 .msg{padding:6px 10px;border-radius:10px;margin:4px 0;background:var(--other);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
 .msg.me{background:var(--me);border-color:transparent}.msg small{color:var(--muted);margin-right:6px}
-.pending .msg{border-color:var(--acc)}
+.msg.pend{border-color:var(--acc)}
 .kv{display:flex;gap:8px;margin:4px 0}.kv b{min-width:48px;color:var(--muted);font-weight:500}
 .urg{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--acc);color:#fff;font-size:12px}
 .reply{border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0;cursor:pointer}
@@ -37,21 +37,20 @@ select{font:inherit;font-size:13px;background:var(--card);color:var(--fg);border
 <div class="bar"><span class="status" id="status"></span><label class="stylebox"><span id="styleLabel">风格</span><select id="style"></select></label></div><div class="status" id="fb"></div>
 <div class="grid">
 <section class="card"><h2>最新建议 <span id="updated" style="font-weight:400"></span> <button id="go" class="go" title="把最近一条对方消息当作待回复，立即分析">⚡ 立即分析</button></h2><div id="sug">等待对方消息…</div><div class="err" id="err"></div></section>
-<section class="card"><h2>最近上下文</h2><div class="pending" id="pending"></div><div class="scroll" id="recent"></div></section>
+<section class="card"><h2>最近上下文 <span class="status" id="ctxn"></span> <button id="sync" class="go" title="立即从微信数据库重读最近消息">⟳ 同步</button></h2><div class="scroll" id="recent"></div></section>
 </div></main>
 <script>
 const EMBED=new URLSearchParams(location.search).has('embed');
 if(EMBED){document.documentElement.classList.add('embed')}
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const ago=ts=>{if(!ts)return '';const d=Date.now()/1000-ts;if(d<3600)return Math.max(1,Math.round(d/60))+' 分钟前';if(d<86400)return Math.round(d/3600)+' 小时前';if(d<86400*30)return Math.round(d/86400)+' 天前';return new Date(ts*1000).toLocaleDateString()};
-function msgHtml(line){const me=/ 我: /.test(line);const i=line.indexOf(': ');const head=line.slice(0,i),body=line.slice(i+2);return `<div class="msg ${me?'me':''}"><small>${esc(head)}</small>${esc(body)}</div>`}
+function msgHtml(line,pend){const me=/ 我: /.test(line);const i=line.indexOf(': ');const head=line.slice(0,i),body=line.slice(i+2);return `<div class="msg ${me?'me':''} ${pend?'pend':''}"><small>${esc(head)}</small>${esc(body)}</div>`}
 async function tick(){try{const s=await (await fetch('/state.json?'+Date.now())).json();
 document.getElementById('contact').textContent=s.contact||'未选择';document.getElementById('status').textContent=s.status||'';
 const sel=document.getElementById('style');if(s.styles&&sel.options.length!==s.styles.length){sel.innerHTML=s.styles.map(x=>`<option value="${esc(x.key)}">${esc(x.name)}</option>`).join('')}if(s.style&&sel.value!==s.style&&document.activeElement!==sel)sel.value=s.style;
 const f=s.feedback;document.getElementById('fb').textContent=f&&f.total?`对照记录 ${f.total} 次：采纳 ${f.adopted||0} · 改写 ${f.adapted||0} · 自己写 ${f.own||0} · 没回 ${f.none||0}`:'';
 document.getElementById('err').textContent=s.error||'';document.getElementById('updated').textContent=s.updated?('· '+s.updated+(s.suggestion?.elapsed?` · ${s.suggestion.elapsed}s`:'')):'';
-document.getElementById('pending').innerHTML=(s.pending||[]).map(msgHtml).join('');
-const r=document.getElementById('recent');const atBottom=r.scrollTop+r.clientHeight>=r.scrollHeight-20;const key=(s.contact_username||'')+'|'+((s.recent||[]).length);const fresh=(window._rk||'').split('|')[0]!==(s.contact_username||'');r.innerHTML=(s.recent||[]).map(msgHtml).join('');if(fresh||atBottom){r.scrollTop=r.scrollHeight;requestAnimationFrame(()=>{r.scrollTop=r.scrollHeight})}window._rk=key;
+const r=document.getElementById('recent');const rec=(s.recent||[]).slice().reverse();const pend=new Set(s.pending||[]);const html=rec.map(x=>msgHtml(x,pend.has(x))).join('');if(html!==window._rh){const atTop=r.scrollTop<20;const fresh=window._rc!==(s.contact_username||'');const ph=r.scrollHeight,pt=r.scrollTop;r.innerHTML=html;window._rh=html;r.scrollTop=(fresh||atTop)?0:pt+(r.scrollHeight-ph)}window._rc=s.contact_username||'';document.getElementById('ctxn').textContent=rec.length?`· ${rec.length} 条`:'';
 const g=s.suggestion;if(g){document.getElementById('sug').innerHTML=`<div class="kv"><b>情绪</b><span>${esc(g.mood)}</span></div><div class="kv"><b>意图</b><span>${esc(g.intent)}</span></div><div class="kv"><b>节奏</b><span class="urg">${esc(g.urgency)}</span></div><div class="kv"><b>建议</b><span>${esc(g.advice)}</span></div>`+(g.replies||[]).map(x=>`<div class="reply" data-t="${esc(x.text)}" title="点击复制"><div class="st">${esc(x.style)}</div><div class="tx">${esc(x.text)}</div></div>`).join('');
 document.querySelectorAll('.reply').forEach(el=>el.onclick=()=>{navigator.clipboard.writeText(el.dataset.t);el.querySelector('.st').textContent+=' · 已复制'})}
 else{document.getElementById('sug').textContent=s.contact?'等待对方消息…':'先在上面选一个联系人'}
@@ -61,6 +60,7 @@ const q=document.getElementById('q'),list=document.getElementById('list');let t=
 async function search(){const rows=await (await fetch('/contacts?q='+encodeURIComponent(q.value))).json();
 list.innerHTML=rows.map(r=>`<div data-u="${esc(r.username)}" class="${r.has_chat?'':'dim'}"><span>${esc(r.name)}${r.group?' <small>群</small>':''}</span><small>${esc(r.nickname&&r.nickname!==r.name?r.nickname+' · ':'')}${r.last_ts?ago(r.last_ts):(r.has_chat?'':'无记录')}</small></div>`).join('')||'<div><small>没有匹配</small></div>';
 list.style.display='block';list.querySelectorAll('div[data-u]').forEach(el=>el.onclick=async()=>{list.style.display='none';q.value='';await fetch('/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:el.dataset.u})});document.getElementById('status').textContent='切换中…'})}
+document.getElementById('sync').onclick=()=>{document.getElementById('status').textContent='同步中…';fetch('/refresh',{method:'POST'}).then(()=>setTimeout(tick,2500)).catch(()=>{document.getElementById('status').textContent='同步失败：服务没响应'})};
 document.getElementById('go').onclick=()=>{fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n:1})});document.getElementById('status').textContent='已触发，分析中…'};
 document.getElementById('style').onchange=e=>fetch('/style',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:e.target.value})});
 q.oninput=()=>{clearTimeout(t);t=setTimeout(search,200)};q.onfocus=search;document.addEventListener('click',e=>{if(!e.target.closest('.picker'))list.style.display='none'});

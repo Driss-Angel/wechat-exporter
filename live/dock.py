@@ -9,7 +9,7 @@ import argparse, os, sys, json, urllib.request
 import objc
 from AppKit import (NSApplication, NSPanel, NSButton, NSFont, NSBezelStyleInline, NSColor, NSScreen, NSWorkspace, NSMakeRect, NSObject, NSTimer, NSRunningApplication,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable, NSWindowStyleMaskResizable, NSWindowStyleMaskNonactivatingPanel,
-                    NSWindowStyleMaskUtilityWindow, NSFloatingWindowLevel, NSBackingStoreBuffered, NSApplicationActivationPolicyAccessory,
+                    NSWindowStyleMaskUtilityWindow, NSFloatingWindowLevel, NSNormalWindowLevel, NSBackingStoreBuffered, NSApplicationActivationPolicyAccessory,
                     NSWindowCollectionBehaviorCanJoinAllSpaces, NSWindowCollectionBehaviorFullScreenAuxiliary)
 from Foundation import NSURL, NSURLRequest
 from WebKit import WKWebView, WKWebViewConfiguration
@@ -132,6 +132,9 @@ class Dock(NSObject):
             if self.cur != self.a.fast: self.arm_(self.a.fast)          # 在动：快采样
         elif self.cur == self.a.fast and time.time() - self.idle_since > 2 and front_pid not in pids:
             self.arm_(self.a.slow)                                        # 静止且微信不在前台：慢采样
+        # 层级跟随焦点：微信或面板在前台 → 浮在最上；否则普通层级，别压住别的 App
+        want = NSFloatingWindowLevel if (front_pid in pids or front_pid == self.my_pid or self.panel.isKeyWindow()) else NSNormalWindowLevel
+        if self.panel.level() != want: self.panel.setLevel_(want)
         if not self.panel.isVisible(): self.panel.orderFront_(None)
 
 def main():

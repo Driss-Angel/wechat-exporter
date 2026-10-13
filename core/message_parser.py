@@ -136,6 +136,10 @@ def _handle_app(msg: Message, body: str) -> Tuple[str, str]:
         refer = appmsg.find("refermsg")
         quoted_from = _find(refer, "displayname")
         quoted_raw = _find(refer, "content")
+        # In groups the quoted content carries the original sender prefix
+        # ("wxid_xxx:\n<msg>…"); strip it so the XML check below still fires.
+        q_sender, quoted_raw = split_group_prefix(quoted_raw)
+        quoted_from = quoted_from or q_sender or ""
         # The quoted original may itself be a structured (XML) message — e.g. an
         # image or another card. Don't dump raw XML into the text; summarize it
         # by the refermsg's own type so the bubble stays readable.

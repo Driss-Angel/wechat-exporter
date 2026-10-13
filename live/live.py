@@ -52,6 +52,8 @@ SYSTEM = """你是「我」的私人聊天参谋。「我」正在和一位联�
 - 亲密度和主动程度以「我」最近自己发的消息为上限，不要比我平时更热络、更黏、更油；别用油腻的套话（「拯救你的无聊」「陪你解解闷」这类）。
 - 群聊里「对方」是多个人，判断时注意是谁在对我说话。
 - 不要编造上下文里没有的事实。
+- 候选必须是「我」会随手打出来的那一句：不要复述或总结对方刚说的信息（她说贵，别回「确实贵」再解释一遍为什么贵），不要给建议、出主意、下结论，不要像客服/顾问/长辈。接不住的话题宁可一句短的反应或反问。
+- 三条候选要真的不同（不同角度或不同动作），不是同一句换措辞。
 只输出一个 JSON 对象：
 - urgency 按守则的「回复节奏」判定：马上回 / 过会儿回（并在 advice 里说大概等多久）/ 先别回。判定为「先别回」时 replies 给空数组，advice 说明原因。
 - 每条候选先在心里对照守则的禁词和禁止事项过一遍，违反的不要输出。
@@ -67,6 +69,9 @@ class Account:
         dec_dir = os.path.join(os.path.expanduser(constants.DECRYPTED_DIR), self.layout.account_id)
         self.decrypted = {src: os.path.join(dec_dir, os.path.basename(src)) for src in self.layout.message_dbs}
         self.decrypted[self.layout.contact_db] = os.path.join(dec_dir, 'contact.db')
+        if not os.path.exists(self.decrypted[self.layout.contact_db]):
+            print('[account] 解密快照不存在（导出器重设密钥会清掉它），重建中…', flush=True)
+            db_decryptor.decrypt_layout(self.layout, self.keys)
         self.contacts = db_reader.read_contacts(self.decrypted, self.layout)
         self.owner = db_reader.resolve_owner_wxid(self.layout, self.decrypted)
         oc = self.contacts.get(self.owner)
@@ -266,13 +271,13 @@ class Session:
             else:
                 self.fb.on_incoming(); self.pending.append(m); self.pending_since = time.time()
         self.fb.tick()
+        return new
 
     def _mentions_me(self, m):
         t = m.display_text or ''
         if any(('@' + n) in t for n in self.chat.acct.my_names) or '@所有人' in t or '@全体成员' in t: return True
         qf = (m.extra or {}).get('quoted_from') or ''
         return m.kind == 'quote' and qf in self.chat.acct.my_names     # 引用我的消息来回复
-        return new
 
 def notify(title, text):
     try:
@@ -310,6 +315,7 @@ def main():
             json.dump(state, open(state_path, 'w'), ensure_ascii=False, indent=1)
     switch_req = {'username': None, 'test_fire': a.test_fire}
     analyze_req = {'n': 0}
+    refresh_req = {'on': False}
     if want:
         c, hits = acct.find(want)
         if c: switch_req['username'] = c.username
@@ -335,6 +341,8 @@ def main():
             if u.path == '/select' and body.get('username') in acct.contacts:
                 switch_req['username'] = body['username']; switch_req['test_fire'] = bool(body.get('test_fire'))
                 return self._json(dict(ok=True))
+            if u.path == '/refresh':
+                refresh_req['on'] = True; return self._json(dict(ok=True))
             if u.path == '/analyze':
                 analyze_req['n'] = max(1, min(int(body.get('n') or 1), 10)); return self._json(dict(ok=True))
             if u.path == '/style' and body.get('key') in {x['key'] for x in list_styles()}:
@@ -364,6 +372,10 @@ def main():
                             sess.pending, sess.pending_since = [incoming[-1]], time.time() - a.debounce - 1
                             print('[test] 用最后一条对方消息触发一次', flush=True)
                 except Exception as e:
+                    if not os.path.exists(acct.decrypted[acct.layout.contact_db]):
+                        print(f'[live] 切换失败 {type(e).__name__}: {e}，解密快照已丢失，重建后重试', flush=True)
+                        state['status'] = '解密快照丢失，重建中…'; save()
+                        acct = Account(); switch_req['username'] = uname; continue
                     state['error'] = f'切换失败 {type(e).__name__}: {e}'; print('[live] ' + state['error'], flush=True)
                 save()
             if sess is None:
@@ -383,6 +395,11 @@ def main():
                 state['status'] = '我已回复，继续监听' if mine and not sess.pending else f'对方新消息 {len(sess.pending)} 条，等待 {a.debounce:.0f}s 看是否还有'
                 state['recent'] = [sess.fmt(m) for m in sess.ctx]; state['pending'] = [sess.fmt(m) for m in sess.pending]; state['feedback'] = sess.fb.stats(); save()
                 print(f"[live] 新消息 {len(new)} 条（对方 {len(new) - mine}）", flush=True)
+            if refresh_req['on']:
+                refresh_req['on'] = False
+                state['recent'] = [sess.fmt(m) for m in sess.ctx]      # 不碰 pending：高亮保留到我回复为止
+                state['status'] = f'已手动同步，上下文 {len(sess.ctx)} 条' + (f'，新 {len(new)} 条' if new else '，无新消息'); save()
+                print(f'[manual] 手动同步，新 {len(new)} 条', flush=True)
 
             if sess.pending and time.time() - sess.pending_since >= a.debounce:
                 state['status'] = '本地模型分析中…'; save()
