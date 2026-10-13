@@ -4,6 +4,21 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## 0.2.3 - 2026-10-12 (fork)
+
+- Read every `message_N.db` shard that holds a conversation's table instead of
+  only the first one. WeChat 4.x spreads long chats across shards, so the
+  original build silently dropped most of the older history (61% of all
+  messages on a real account; 137 of 297,281 in its largest group).
+  `find_chat_table` now returns the shard list; `count_messages` /
+  `read_messages` merge all shards, sort by `create_time` and de-duplicate by
+  `server_id`. Sender resolution stays per shard because `Name2Id` rowids differ
+  between shards.
+- Add a two-shard synthetic fixture to `tests/test_pipeline.py` (fails on the
+  original code).
+- `WECHAT_EXPORTER_WINDOW=WxH` and `WECHAT_EXPORTER_ZOOM=1.4` environment
+  overrides for the native window size and UI scale (recording aids; off by default).
+
 ## 0.2.2 - 2026-08-13
 
 - Open the packaged macOS application in an independent Cocoa/WKWebView window

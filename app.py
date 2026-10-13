@@ -138,6 +138,22 @@ def _demo_messages() -> List[Dict]:
 app = Flask(__name__)
 
 
+def _window_size() -> Tuple[int, int]:
+    """Native window size; override with WECHAT_EXPORTER_WINDOW=WIDTHxHEIGHT (e.g. for recordings)."""
+    raw = os.environ.get("WECHAT_EXPORTER_WINDOW", "")
+    try:
+        w, h = (int(v) for v in raw.lower().split("x"))
+        if w >= 980 and h >= 680:
+            return w, h
+    except ValueError:
+        pass
+    return 1280, 820
+
+
+_WINDOW_SIZE = _window_size()
+
+
+
 # --------------------------------------------------------------------------- #
 # Session: holds the decrypted map + layout + contacts + a shared MediaResolver.
 # --------------------------------------------------------------------------- #
@@ -148,7 +164,7 @@ class Session:
         self.keys = keys
         self.decrypted = decrypted
         self.contacts: Dict[str, Contact] = db_reader.read_contacts(decrypted, layout)
-        self.table_index: Dict[str, str] = db_reader.build_table_index(
+        self.table_index: Dict[str, List[str]] = db_reader.build_table_index(
             [decrypted.get(db, db) for db in layout.message_dbs]
         )
         self.owner_wxid: str = (db_reader.resolve_owner_wxid(layout, decrypted)
@@ -174,7 +190,7 @@ class Session:
     def has_table(self, c: Contact) -> bool:
         return c.chat_table(self.layout.version).lower() in self.table_index
 
-    def find_table(self, c: Contact) -> Optional[Tuple[str, str]]:
+    def find_table(self, c: Contact) -> Optional[Tuple[List[str], str]]:
         return db_reader.find_chat_table(self.table_index, c, self.layout.version)
 
     def lock(self):
@@ -949,6 +965,10 @@ def api_quit():
 
 @app.route("/")
 def index():
+    zoom = os.environ.get("WECHAT_EXPORTER_ZOOM", "").strip()
+    if zoom:
+        # Recording aid only: scale the whole UI (e.g. 1.5 in a 1920-wide window).
+        return PAGE.replace("</head>", "<style>html{zoom:%s}</style></head>" % zoom, 1)
     return PAGE
 
 
@@ -1438,8 +1458,8 @@ def _run_native_window(url: str) -> bool:
         window = webview.create_window(
             "微信聊天记录导出",
             url=url,
-            width=1280,
-            height=820,
+            width=_WINDOW_SIZE[0],
+            height=_WINDOW_SIZE[1],
             min_size=(980, 680),
             resizable=True,
             background_color="#e9edf1",

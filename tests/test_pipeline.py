@@ -103,6 +103,29 @@ def build_v4(base):
     conn.commit()
     conn.close()
 
+    # --- message_1.db: SAME 1:1 table, older history (WeChat 4.x re-shards big
+    # chats; the shard holding the oldest rows is not necessarily message_0) ---
+    msg_db1 = os.path.join(msg_dir, "message_1.db")
+    conn, cur = _connect_encrypted(msg_db1, "v4")
+    cur.execute(
+        'CREATE TABLE "%s" (local_id INTEGER PRIMARY KEY, server_id TEXT, '
+        "local_type INTEGER, create_time INTEGER, real_sender_id INTEGER, "
+        "message_content BLOB, WCDB_CT_message_content INTEGER, status INTEGER)" % tbl
+    )
+    # Name2Id is per-shard: rowids deliberately differ from message_0.db
+    cur.execute("CREATE TABLE Name2Id (user_name TEXT)")
+    cur.execute("INSERT INTO Name2Id (rowid, user_name) VALUES (?,?)", (1, FRIEND))
+    cur.execute("INSERT INTO Name2Id (rowid, user_name) VALUES (?,?)", (2, OWNER_V4))
+    older = [
+        (1, "o1", 1, 1_690_000_000, 1, "最早的一条".encode(), 0, 0),        # recv (FRIEND = rowid 1 here)
+        (2, "o2", 1, 1_690_000_100, 2, "我回的旧消息".encode(), 0, 0),      # sent (OWNER = rowid 2 here)
+        (3, "o3", 1, 1_690_000_200, 1, "旧消息三".encode(), 0, 0),
+        (4, "s1", 1, 1_700_000_000, 1, "你好呀".encode(), 0, 0),            # duplicate of message_0 s1
+    ]
+    cur.executemany('INSERT INTO "%s" VALUES (?,?,?,?,?,?,?,?)' % tbl, older)
+    conn.commit()
+    conn.close()
+
     # --- contact.db ---
     cdb = os.path.join(contact_dir, "contact.db")
     conn, cur = _connect_encrypted(cdb, "v4")
@@ -119,7 +142,7 @@ def build_v4(base):
 
     return Layout(
         version="v4", account_dir=acct, account_id=OWNER_V4,
-        message_dbs=[msg_db], contact_db=cdb,
+        message_dbs=[msg_db, msg_db1], contact_db=cdb,
     )
 
 
@@ -207,6 +230,26 @@ def check_v4(layout):
     assert any(m.display_text == "在的，有事？" and m.is_sender for m in msgs), "self text mis-tagged"
     # voice flagged
     assert any(m.needs_voice for m in msgs), "voice not flagged"
+
+    # ---- multi-shard merge ----
+    index = db_reader.build_table_index([decrypted[db] for db in layout.message_dbs])
+    hit = db_reader.find_chat_table(index, contacts[FRIEND], layout.version)
+    assert isinstance(hit[0], list) and len(hit[0]) == 2, "both shards must be found: %r" % (hit,)
+    # 7 (message_0) + 4 (message_1) rows; the duplicated server_id s1 is dropped once
+    assert db_reader.count_messages(hit[0], hit[1], version="v4") == 11
+    assert len(msgs) == 10, "expected 10 merged msgs, got %d" % len(msgs)
+    assert sum(1 for m in msgs if m.server_id == "s1") == 1, "duplicate server_id not de-duplicated"
+    # chronological across shards: oldest row lives in message_1.db
+    assert [m.timestamp for m in msgs] == sorted(m.timestamp for m in msgs)
+    assert msgs[0].display_text == "最早的一条", msgs[0].display_text
+    # per-shard Name2Id: rowids differ between shards and must resolve per shard
+    assert any(m.display_text == "我回的旧消息" and m.is_sender for m in msgs), "shard-1 self mis-tagged"
+    assert any(m.display_text == "最早的一条" and not m.is_sender for m in msgs), "shard-1 recv mis-tagged"
+    # date filter spans shards
+    old_only = db_reader.read_messages(hit[0], hit[1], layout, contacts[FRIEND], OWNER_V4,
+                                       end_ts=1_695_000_000)
+    assert len(old_only) == 3, len(old_only)
+    assert db_reader.count_messages(hit[0], hit[1], end_ts=1_695_000_000, version="v4") == 3
 
     # group: Name2Id resolves member, prefix stripped
     gcontact = contacts[GROUP]

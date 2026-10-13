@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
 from . import constants
@@ -105,9 +105,14 @@ def read_contacts(decrypted: Dict[str, str], layout: Layout) -> Dict[str, Contac
 # --------------------------------------------------------------------------- #
 # Chat-table discovery across shards
 # --------------------------------------------------------------------------- #
-def build_table_index(decrypted_msg_dbs: List[str]) -> Dict[str, str]:
-    """Map lowercased message-table name -> decrypted DB path (across all shards)."""
-    index: Dict[str, str] = {}
+def build_table_index(decrypted_msg_dbs: List[str]) -> Dict[str, List[str]]:
+    """Map lowercased message-table name -> decrypted DB paths (across all shards).
+
+    WeChat 4.x keeps the *same* ``Msg_<md5>`` table in several ``message_N.db``
+    shards once a conversation grows (older history lands in other shards), so
+    every shard that holds the table is recorded, in ``decrypted_msg_dbs`` order.
+    """
+    index: Dict[str, List[str]] = {}
     for db in decrypted_msg_dbs:
         if not os.path.exists(db):
             continue
@@ -129,18 +134,24 @@ def build_table_index(decrypted_msg_dbs: List[str]) -> Dict[str, str]:
                 # 'Chat_'/'Msg_' tables only (skip ChatExt2_/ChatCrypt_/etc.)
                 if low.startswith("chatext") or low.startswith("chatcrypt"):
                     continue
-                index.setdefault(low, db)
+                index.setdefault(low, []).append(db)
     return index
 
 
-def find_chat_table(index: Dict[str, str], contact: Contact, version: str
-                    ) -> Optional[Tuple[str, str]]:
-    """Return ``(db_path, real_table_name)`` for a contact, or None if not found."""
+def find_chat_table(index: Dict[str, List[str]], contact: Contact, version: str
+                    ) -> Optional[Tuple[List[str], str]]:
+    """Return ``(db_paths, real_table_name)`` for a contact, or None if not found.
+
+    ``db_paths`` lists every shard holding the table; pass it straight to
+    :func:`count_messages` / :func:`read_messages`, which accept a list.
+    """
     target = contact.chat_table(version).lower()
-    db = index.get(target)
-    if not db:
+    dbs = index.get(target)
+    if not dbs:
         return None
-    # recover the real (original-case) table name
+    db = dbs[0]
+    # recover the real (original-case) table name (SQLite identifiers are
+    # case-insensitive, so the name from the first shard works for all of them)
     conn = _connect_ro(db)
     try:
         row = conn.execute(
@@ -149,7 +160,7 @@ def find_chat_table(index: Dict[str, str], contact: Contact, version: str
         ).fetchone()
     finally:
         conn.close()
-    return (db, row[0]) if row else (db, contact.chat_table(version))
+    return (list(dbs), row[0]) if row else (list(dbs), contact.chat_table(version))
 
 
 # --------------------------------------------------------------------------- #
@@ -221,8 +232,22 @@ def _maybe_decompress(value, ct_flag) -> str:
 # --------------------------------------------------------------------------- #
 # Messages
 # --------------------------------------------------------------------------- #
-def count_messages(db: str, table: str, start_ts: Optional[int] = None,
+DbPaths = Union[str, Sequence[str]]
+
+
+def _as_db_list(db: DbPaths) -> List[str]:
+    return [db] if isinstance(db, str) else list(db)
+
+
+def count_messages(db: DbPaths, table: str, start_ts: Optional[int] = None,
                    end_ts: Optional[int] = None, version: str = "v4") -> int:
+    """Count messages in *table* summed over every shard in *db* (str or list)."""
+    return sum(_count_messages_one(d, table, start_ts, end_ts, version)
+               for d in _as_db_list(db))
+
+
+def _count_messages_one(db: str, table: str, start_ts: Optional[int],
+                        end_ts: Optional[int], version: str) -> int:
     conn = _connect_ro(db)
     try:
         cols = _table_columns(conn, table)
@@ -249,10 +274,39 @@ def _time_clause(time_col: Optional[str], start_ts, end_ts):
     return " WHERE " + " AND ".join(clauses), tuple(params)
 
 
-def read_messages(db: str, table: str, layout: Layout, contact: Contact,
+def read_messages(db: DbPaths, table: str, layout: Layout, contact: Contact,
                   owner_username: str, start_ts: Optional[int] = None,
                   end_ts: Optional[int] = None) -> List[Message]:
-    """Read and lightly-normalize messages for one conversation (raw, unparsed)."""
+    """Read and lightly-normalize messages for one conversation (raw, unparsed).
+
+    *db* may be a single decrypted DB path or the list of shards returned by
+    :func:`find_chat_table`. Rows from all shards are merged, de-duplicated by
+    ``server_id`` (the same message can survive in two shards after WeChat
+    re-shards), and ordered by ``create_time`` (stable, so same-second rows keep
+    shard order then ``local_id`` order).
+    """
+    dbs = _as_db_list(db)
+    if len(dbs) == 1:
+        return _read_messages_one(dbs[0], table, layout, contact, owner_username,
+                                  start_ts, end_ts)
+    merged: List[Message] = []
+    seen_server_ids = set()
+    for d in dbs:
+        for m in _read_messages_one(d, table, layout, contact, owner_username,
+                                    start_ts, end_ts):
+            sid = m.server_id
+            if sid and sid != "0":
+                if sid in seen_server_ids:
+                    continue
+                seen_server_ids.add(sid)
+            merged.append(m)
+    merged.sort(key=lambda m: m.timestamp)  # stable: keeps shard/local_id order on ties
+    return merged
+
+
+def _read_messages_one(db: str, table: str, layout: Layout, contact: Contact,
+                       owner_username: str, start_ts: Optional[int] = None,
+                       end_ts: Optional[int] = None) -> List[Message]:
     version = layout.version
     cols_spec = constants.SCHEMA[version]["cols"]
     conn = _connect_ro(db)
